@@ -6,6 +6,7 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
+import org.apache.hadoop.hbase.mapreduce.HFileOutputFormat;
 import org.apache.hadoop.io.LongWritable;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapred.lib.MultipleTextOutputFormat;
@@ -13,7 +14,9 @@ import org.apache.hadoop.mapreduce.InputSplit;
 import org.apache.hadoop.mapreduce.Mapper;
 import org.apache.hadoop.mapreduce.RecordWriter;
 import org.apache.hadoop.mapreduce.TaskAttemptContext;
+import org.apache.hadoop.mapreduce.lib.input.FileSplit;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
+import org.apache.hadoop.mapreduce.lib.output.MultipleOutputs;
 import org.apache.hadoop.mapreduce.lib.output.TextOutputFormat;
 import org.json.simple.JSONObject;
 import org.json.simple.parser.JSONParser;
@@ -25,68 +28,38 @@ import au.com.bytecode.opencsv.CSVParser;
  * Mapper Class
  */
 public class HBaseKVMapper extends
-		Mapper<LongWritable, Text, ImmutableBytesWritable, KeyValue> {
+		Mapper<LongWritable, Text, ImmutableBytesWritable, Text> {
 	
 	//protected String filenameKey;
-	private RecordWriter<ImmutableBytesWritable, KeyValue> writerUser;
-	private RecordWriter<ImmutableBytesWritable, KeyValue> writerTime;
+	
+//	private MultipleOutputs<ImmutableBytesWritable,KeyValue> mos;
+	
+	
 	private JSONParser parser = new JSONParser();
 	private String bucket;
 	
 	// Set column family name
-	final static byte[] SRV_COL_FAM = "tweet".getBytes();
+//	final static byte[] SRV_COL_FAM = "tw".getBytes();
 	// Number of fields in text file
 	final static int NUM_FIELDS = 3;
 
 	CSVParser csvParser = new CSVParser();
 	String tableName = "";
 
-	ImmutableBytesWritable userKey = new ImmutableBytesWritable();
-	ImmutableBytesWritable timeKey = new ImmutableBytesWritable();
-	KeyValue kv;
+	ImmutableBytesWritable userKey_1 = new ImmutableBytesWritable();
+	ImmutableBytesWritable userKey_2 = new ImmutableBytesWritable();
+	ImmutableBytesWritable userKey_3 = new ImmutableBytesWritable();
+	ImmutableBytesWritable userKey_4 = new ImmutableBytesWritable();
 	
+	ImmutableBytesWritable timeKey =  new  ImmutableBytesWritable();
 	
 
 	/** {@inheritDoc} */
 	@Override
 	protected void setup(Context context) throws IOException,
 			InterruptedException {
-		Configuration c = context.getConfiguration();
-		tableName = c.get("hbase.table.name");
-		String parameter2 = c.get("parameter2");
-		bucket ="00";
-		setOutPath(context);
+		bucket = Utility.getRandomizedBucket();
 	}
-	
-	private void setOutPath(Context context)throws IOException, InterruptedException{
-        // base output folder
-        Path baseOutputPath = FileOutputFormat.getOutputPath(context);
-        // output file name
-        final Path outputFilePathUser = new Path(baseOutputPath, HColumnEnum.UserOutput);
-        final Path outputFilePathTime = new Path(baseOutputPath, HColumnEnum.TimeOutput);
-        // We need to override the getDefaultWorkFile path to stop the file being created in the _temporary/taskid folder
-        TextOutputFormat<ImmutableBytesWritable, KeyValue> tofUser = 
-        		new TextOutputFormat<ImmutableBytesWritable, KeyValue>() {
-            @Override
-            public Path getDefaultWorkFile(TaskAttemptContext context,
-                    String extension) throws IOException {
-                return outputFilePathUser;
-            }
-        };
-        // We need to override the getDefaultWorkFile path to stop the file being created in the _temporary/taskid folder
-        TextOutputFormat<ImmutableBytesWritable, KeyValue> tofTime =
-        		new TextOutputFormat<ImmutableBytesWritable, KeyValue>() {
-            @Override
-            public Path getDefaultWorkFile(TaskAttemptContext context,
-                    String extension) throws IOException {
-                return outputFilePathTime;
-            }
-        };
-        // create a record writer that will write to the desired output subfolder
-        writerUser = tofUser.getRecordWriter(context);
-        writerTime = tofTime.getRecordWriter(context);
-	}
-	
 	
 	/** {@inheritDoc} */
 	@Override
@@ -99,7 +72,7 @@ public class HBaseKVMapper extends
 		try {
 			json = (JSONObject) parser.parse(value.toString());
 			
-			String time = json.get("created_at").toString();
+			String time = Utility.convertDateFormat(json.get("created_at").toString());
 			String id = json.get("id").toString();
 			String text = json.get("text").toString();
 
@@ -117,38 +90,50 @@ public class HBaseKVMapper extends
 				has_retweet = false;
 			}
 			
-			userKey.set(String.format("%s", bucket+"|"+time+"|"+id).getBytes());
+			//timeKey.set(String.format("%s", bucket+"|"+time+"|"+id).getBytes());
+			timeKey.set(String.format("%s", bucket+HColumnEnum.splitRowKey+time+HColumnEnum.splitRowKey+id).getBytes());
+			
 			if(!text.equals("")){
-				kv = new KeyValue(userKey.get(), SRV_COL_FAM,
-						HColumnEnum.SRV_COL_TXT.getColumnName(), text.getBytes());
-				writerTime.write(userKey, kv);
+//				mos.write(HColumnEnum.TimeTable,timeKey, kv,HColumnEnum.TimeOutput);
+				context.write(timeKey, new Text(HColumnEnum.TXT+HColumnEnum.splitWord+text));
 			}
 
-			timeKey.set(String.format("%s", bucket+"|"+user_id+"|"+id).getBytes());
+			userKey_1.set(String.format("%s", bucket+HColumnEnum.splitRowKey+user_id+HColumnEnum.splitRowKey+id+HColumnEnum.splitRowKey+"uid").getBytes());
 			
-			kv = new KeyValue(userKey.get(), SRV_COL_FAM,
-					HColumnEnum.SRV_COL_RST.getColumnName(), has_retweet
-							.toString().getBytes());
-			writerUser.write(timeKey, kv);
+
+			//mos.write(HColumnEnum.UserTable,userKey, kv,HColumnEnum.UserOutput);
 			
 			if(!user_id.equals("")){
-				kv = new KeyValue(userKey.get(), SRV_COL_FAM,
-						HColumnEnum.SRV_COL_UID.getColumnName(), text.getBytes());
-				writerTime.write(userKey, kv);
+
+				//mos.write(HColumnEnum.UserTable,userKey, kv,HColumnEnum.UserOutput);
+				context.write(userKey_1,  new Text(HColumnEnum.USER_ID+HColumnEnum.splitWord+user_id));
 			}
+			
+			userKey_2.set(String.format("%s", bucket+HColumnEnum.splitRowKey+user_id+HColumnEnum.splitRowKey+id+HColumnEnum.splitRowKey+"rud").getBytes());
+			
+			if(has_retweet){
+				if(!re_user_id.equals("")){
+					//mos.write(HColumnEnum.UserTable,userKey, kv,HColumnEnum.UserOutput);
+					context.write(userKey_2,  new Text(HColumnEnum.REUSER_ID+HColumnEnum.splitWord+re_user_id));
+				}
+			}
+			
+			userKey_3.set(String.format("%s", bucket+HColumnEnum.splitRowKey+user_id+HColumnEnum.splitRowKey+id+HColumnEnum.splitRowKey+"rst").getBytes());
+			context.write(userKey_3, new Text(HColumnEnum.HAS_RETEWEET+HColumnEnum.splitWord+has_retweet.toString()));
+			
+			
+			userKey_4.set(String.format("%s", bucket+HColumnEnum.splitRowKey+user_id+HColumnEnum.splitRowKey+id+HColumnEnum.splitRowKey+"rid").getBytes());
 			
 			if(has_retweet){
 				if(!re_id.equals("")){
-					kv = new KeyValue(userKey.get(), SRV_COL_FAM,
-							HColumnEnum.SRV_COL_RID.getColumnName(), re_id.getBytes());
-					writerTime.write(userKey, kv);
-				}
-				if(!re_user_id.equals("")){
-					kv = new KeyValue(userKey.get(), SRV_COL_FAM,
-							HColumnEnum.SRV_COL_RID.getColumnName(), re_id.getBytes());
-					writerTime.write(userKey, kv);
+					//mos.write(HColumnEnum.UserTable,userKey, kv,HColumnEnum.UserOutput);
+					context.write(userKey_4,  new Text(HColumnEnum.RETEWEET_ID+HColumnEnum.splitWord+re_id));
 				}
 			}
+
+
+			
+			
 			
 		} catch (ParseException e) {
 			// TODO Auto-generated catch block

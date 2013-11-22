@@ -8,12 +8,18 @@ import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
 import org.apache.hadoop.hbase.mapreduce.HFileOutputFormat;
 import org.apache.hadoop.hbase.mapreduce.LoadIncrementalHFiles;
 import org.apache.hadoop.hbase.regionserver.metrics.SchemaMetrics;
+import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
 import org.apache.hadoop.mapreduce.lib.input.TextInputFormat;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
+import org.apache.hadoop.mapreduce.lib.output.MultipleOutputs;
+import org.apache.hadoop.mapreduce.lib.output.TextOutputFormat;
 
+import Bulk.HBaseHFileReducer;
+import Bulk.HBaseHFileReducerText;
 import Bulk.HBaseKVMapper;
+import Bulk.HBaseKVMapperText;
 import Bulk.HColumnEnum;
 
 /**
@@ -32,30 +38,39 @@ public class Driver {
 		Configuration conf = new Configuration();
 
 		// Pass parameters to Mad Reduce
-		conf.set("hbase.table.name1", "timeTable");
-		conf.set("hbase.table.name2", "userTable");
 		//conf.set("parameter2","pass parameter example" );
 		
+		// Pass parameters to Mad Reduce
+        conf.set("hbase.table.name", "TimeTable");
+        
+        conf.set("parameter2","pass parameter example" );
+		
 		// Workaround
-		SchemaMetrics.configureGlobally(conf);
+		//SchemaMetrics.configureGlobally(conf);
 
 		// Load hbase-site.xml
-		HBaseConfiguration.addHbaseResources(conf);
+		//HBaseConfiguration.addHbaseResources(conf);
 
 		// Create the job
 		Job job = new Job(conf, "HBase Bulk Import");
 
 		job.setJarByClass(HBaseKVMapper.class);
 		job.setMapperClass(HBaseKVMapper.class);
-		job.setMapOutputKeyClass(ImmutableBytesWritable.class);
-		job.setMapOutputValueClass(KeyValue.class);
-
-		job.setInputFormatClass(TextInputFormat.class);
+		job.setReducerClass(HBaseHFileReducer.class); 
 		
-		// Get the table
+		job.setMapOutputKeyClass(ImmutableBytesWritable.class);
+		job.setMapOutputValueClass(Text.class);
+		
+		
+		job.setOutputFormatClass(HFileOutputFormat.class); 
+		
+	    MultipleOutputs.addNamedOutput(job,HColumnEnum.TimeTable,HFileOutputFormat.class,ImmutableBytesWritable.class,KeyValue.class);
+	    MultipleOutputs.addNamedOutput(job,HColumnEnum.UserTable,HFileOutputFormat.class,ImmutableBytesWritable.class,KeyValue.class);
+
+	    // Get the table
 		HTable userTable = new HTable(conf, "userTable");
 		// Get the table
-		HTable timeTable = new HTable(conf, "timeTable");
+		//HTable timeTable = new HTable(conf, "timeTable");
 
 		// Auto configure partitioner and reducer
 		HFileOutputFormat.configureIncrementalLoad(job, userTable);
@@ -69,11 +84,6 @@ public class Driver {
 
 		// Wait for HFiles creations
 		job.waitForCompletion(true);
-
-		// Load generated HFiles into table
-		LoadIncrementalHFiles loader = new LoadIncrementalHFiles(conf);
-		loader.doBulkLoad(new Path(HColumnEnum.UserOutput), userTable);
-		loader.doBulkLoad(new Path(HColumnEnum.TimeOutput), timeTable);
 		
 	}
 }
